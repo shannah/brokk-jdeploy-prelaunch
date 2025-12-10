@@ -357,8 +357,17 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
         // Block on the async check to preserve legacy synchronous behavior.
         UpdateResult res = requireVersionAsync(requiredVersion, params, forceUpdate).get();
 
-        // If no update is required (includes preference gating), return early.
+        // If no update is required (includes preference gating):
+        // - In forced-update mode, enforce quitting by exiting the JVM.
+        // - Otherwise, return early as before.
         if (res == null || !res.isRequired()) {
+          if (forceUpdate) {
+            try {
+              System.exit(0);
+            } catch (SecurityException se) {
+              System.err.println("requireVersion: unable to exit JVM: " + se.getMessage());
+            }
+          }
           return;
         }
 
