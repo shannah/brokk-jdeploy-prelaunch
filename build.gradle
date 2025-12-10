@@ -39,7 +39,7 @@ shadowJar {
     manifest {
         attributes(
             // Update this Main-Class if you want a different entry point
-            'Main-Class': 'ca.weblite.jdeploy.updateclient.PrelaunchMain'
+            'Main-Class': 'ca.weblite.jdeploy.prelaunch.Main'
         )
     }
     // Ensure shadow JAR is built before signing/publishing

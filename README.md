@@ -200,6 +200,46 @@ if (controller.isUpdateAvailable("2.0.0")) {
 - **Swing** (for GUI prompts)
 - No external dependencies (minimal-json is shaded)
 
+## Running the prelaunch JAR (smoke test)
+
+This project builds a self-contained executable Shadow JAR named `jdeploy-prelaunch.jar`.
+
+Build the Shadow JAR:
+
+```sh
+./gradlew shadowJar
+```
+
+The produced JAR will be located at:
+
+- build/libs/jdeploy-prelaunch.jar
+
+Run the JAR (from project root):
+
+```sh
+java -jar build/libs/jdeploy-prelaunch.jar
+```
+
+Or change to the `build/libs` directory and run:
+
+```sh
+cd build/libs
+java -jar jdeploy-prelaunch.jar
+```
+
+You can pass configuration via system properties or environment variables for a quick smoke test:
+
+- packageName: system property `-DpackageName=brokk` or environment `PACKAGE_NAME`
+- source: system property `-Dsource=https://github.com/username/repo` or environment `SOURCE`
+- appTitle: system property `-DappTitle="My App"`
+- currentVersion: system property `-DcurrentVersion=1.0.0`
+
+Example:
+
+```sh
+java -DpackageName=brokk -DappTitle="Brokk Launcher" -jar build/libs/jdeploy-prelaunch.jar
+```
+
 ## License
 
 Apache License 2.0
