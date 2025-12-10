@@ -107,3 +107,12 @@ signing {
 tasks.withType(Sign) {
     dependsOn shadowJar, sourcesJar, javadocJar
 }
+
+task runPrelaunch(type: JavaExec) {
+    description = 'Run the prelaunch Main for manual testing (sets jdeploy.app.version=0.17.1).'
+    group = 'application'
+    dependsOn classes
+    main = 'ca.weblite.jdeploy.prelaunch.Main'
+    classpath = sourceSets.main.runtimeClasspath
+    systemProperty 'jdeploy.app.version', '0.17.1'
+}
