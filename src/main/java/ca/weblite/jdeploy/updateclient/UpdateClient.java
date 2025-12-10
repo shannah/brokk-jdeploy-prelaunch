@@ -187,103 +187,130 @@ public class UpdateClient {
      * @param forceUpdate if true, bypass ignore/defer gating and present only Update Now / Quit options
      * @return CompletableFuture completing with UpdateResult
      */
-    public CompletableFuture<UpdateResult> requireVersionAsync(
-        final String requiredVersion, final UpdateParameters params, final boolean forceUpdate) {
-      return CompletableFuture.supplyAsync(
-          () -> {
-            try {
-              if (requiredVersion == null || requiredVersion.isEmpty()) {
-                return new UpdateResult(this, null, null, null, null, false);
+/**
+ * New overload that supports forcing the update UI to only allow updating or quitting.
+ *
+ * @param requiredVersion the required version string
+ * @param params parameters describing the application (packageName is required)
+ * @param forceUpdate if true, bypass ignore/defer gating and present only Update Now / Quit options
+ * @return CompletableFuture completing with UpdateResult
+ */
+public CompletableFuture<UpdateResult> requireVersionAsync(
+    final String requiredVersion, final UpdateParameters params, final boolean forceUpdate) {
+  return CompletableFuture.supplyAsync(
+      () -> {
+        try {
+          if (requiredVersion == null || requiredVersion.isEmpty()) {
+            return new UpdateResult(this, null, null, null, null, false);
+          }
+          if (params == null) {
+            throw new IllegalArgumentException("params must not be null");
+          }
+
+          // Prerequisite: the app must be running under the jdeploy launcher.
+          // If jdeploy.app.version is not set, do not perform update checks.
+          String appVersionProperty = System.getProperty("jdeploy.app.version");
+          if (appVersionProperty == null || appVersionProperty.isEmpty()) {
+            // Not running via jdeploy launcher; preserve legacy behaviour by doing nothing.
+            return new UpdateResult(
+                this, params.getPackageName(), params.getSource(), null, requiredVersion, false);
+          }
+
+          // Use the launcher's reported app version for comparisons. Default to "0.0.0" if missing.
+          String launcherVersion = System.getProperty("jdeploy.launcher.app.version");
+          if (launcherVersion == null || launcherVersion.isEmpty()) {
+            launcherVersion = "0.0.0";
+          }
+
+          // Use launcherVersion as the canonical currentVersion for later logic.
+          String currentVersion = launcherVersion;
+
+          // If branch version or already >= requiredVersion, return early (no update required).
+          if (isBranchVersion(currentVersion) || compareVersion(currentVersion, requiredVersion) >= 0) {
+            return new UpdateResult(
+                this, params.getPackageName(), params.getSource(), currentVersion, requiredVersion, false);
+          }
+
+          String packageName = params.getPackageName();
+          String source = params.getSource() == null ? "" : params.getSource();
+
+          // Respect early preference gating (ignore / defer) unless forceUpdate is true.
+          if (!forceUpdate && shouldSkipPrompt(packageName, source, requiredVersion)) {
+            return new UpdateResult(this, packageName, source, currentVersion, requiredVersion, false);
+          }
+
+          // Determine whether to include prereleases in the lookup.
+          boolean isPrerelease = "true".equals(System.getProperty("jdeploy.prerelease", "false"));
+
+          // Fetch latest version (network). Any IO error will be wrapped and complete exceptionally.
+          String latestVersion = findLatestVersion(packageName, source, isPrerelease);
+
+          // If the latest version was already explicitly ignored, do not require update (unless forcing).
+          String ignoredVersion = getIgnoredVersion(packageName, source);
+          if (!forceUpdate && ignoredVersion != null && !ignoredVersion.isEmpty() && ignoredVersion.equals(latestVersion)) {
+            return new UpdateResult(this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+          }
+
+          // At this point, we have a candidate latestVersion and the launcher is older than requiredVersion.
+          // Prompt the user to decide whether to update now or quit (or later/ignore in legacy flow).
+          UpdateDecision decision =
+              promptForUpdate(packageName, params.getAppTitle(), currentVersion, requiredVersion, forceUpdate);
+
+          switch (decision) {
+            case IGNORE:
+              // Persist the ignored version for this package+source and return not required.
+              // Do not persist when this is a forced-update flow (defensive).
+              if (!forceUpdate) {
+                setIgnoredVersion(packageName, source, requiredVersion);
               }
-              if (params == null) {
-                throw new IllegalArgumentException("params must not be null");
+              return new UpdateResult(
+                  this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+
+            case LATER:
+              // Defer prompts for DEFAULT_DEFER_DAYS days.
+              // Only persist defer when not a forced-update flow.
+              if (!forceUpdate) {
+                long until =
+                    System.currentTimeMillis()
+                        + java.util.concurrent.TimeUnit.DAYS.toMillis(DEFAULT_DEFER_DAYS);
+                setDeferUntil(packageName, source, until);
               }
+              return new UpdateResult(
+                  this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
 
-              // Prerequisite: the app must be running under the jdeploy launcher.
-              // If jdeploy.app.version is not set, do not perform update checks.
-              String appVersionProperty = System.getProperty("jdeploy.app.version");
-              if (appVersionProperty == null || appVersionProperty.isEmpty()) {
-                // Not running via jdeploy launcher; preserve legacy behaviour by doing nothing.
-                return new UpdateResult(this, params.getPackageName(), params.getSource(), null,
-                    requiredVersion, false);
+            case UPDATE_NOW:
+              // Caller is responsible for launching the installer and exiting the JVM.
+              return new UpdateResult(
+                  this, packageName, source, currentVersion, requiredVersion, true, latestVersion);
+
+            case QUIT:
+              // Map QUIT to the LATER outcome but do not persist any preferences when this is a
+              // forced-update flow. If not forced, behave like LATER (persist defer).
+              if (!forceUpdate) {
+                long until =
+                    System.currentTimeMillis()
+                        + java.util.concurrent.TimeUnit.DAYS.toMillis(DEFAULT_DEFER_DAYS);
+                setDeferUntil(packageName, source, until);
               }
+              return new UpdateResult(
+                  this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
 
-              // Use the launcher's reported app version for comparisons. Default to "0.0.0" if missing.
-              String launcherVersion = System.getProperty("jdeploy.launcher.app.version");
-              if (launcherVersion == null || launcherVersion.isEmpty()) {
-                launcherVersion = "0.0.0";
+            default:
+              // Defensive: treat unknown result as defer (LATER)
+              if (!forceUpdate) {
+                long defUntil =
+                    System.currentTimeMillis()
+                        + java.util.concurrent.TimeUnit.DAYS.toMillis(DEFAULT_DEFER_DAYS);
+                setDeferUntil(packageName, source, defUntil);
               }
-
-              // Use launcherVersion as the canonical currentVersion for later logic.
-              String currentVersion = launcherVersion;
-
-              // If branch version or already >= requiredVersion, return early (no update required).
-              if (isBranchVersion(currentVersion) || compareVersion(currentVersion, requiredVersion) >= 0) {
-                return new UpdateResult(this, params.getPackageName(), params.getSource(), currentVersion,
-                    requiredVersion, false);
-              }
-
-              String packageName = params.getPackageName();
-              String source = params.getSource() == null ? "" : params.getSource();
-
-              // Respect early preference gating (ignore / defer) unless forceUpdate is true.
-              if (!forceUpdate && shouldSkipPrompt(packageName, source, requiredVersion)) {
-                return new UpdateResult(this, packageName, source, currentVersion, requiredVersion, false);
-              }
-
-              // Determine whether to include prereleases in the lookup.
-              boolean isPrerelease = "true".equals(System.getProperty("jdeploy.prerelease", "false"));
-
-              // Fetch latest version (network). Any IO error will be wrapped and complete exceptionally.
-              String latestVersion = findLatestVersion(packageName, source, isPrerelease);
-
-              // If the latest version was already explicitly ignored, do not require update (unless forcing).
-              String ignoredVersion = getIgnoredVersion(packageName, source);
-              if (!forceUpdate && ignoredVersion != null && !ignoredVersion.isEmpty() && ignoredVersion.equals(latestVersion)) {
-                return new UpdateResult(this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
-              }
-
-              // At this point, we have a candidate latestVersion and the launcher is older than requiredVersion.
-              // Prompt the user to decide whether to update now or quit (or later/ignore in legacy flow).
-              UpdateDecision decision =
-                  promptForUpdate(packageName, params.getAppTitle(), currentVersion, requiredVersion, forceUpdate);
-
-              switch (decision) {
-                case IGNORE:
-                  // Persist the ignored version for this package+source and return not required.
-                  setIgnoredVersion(packageName, source, requiredVersion);
-                  return new UpdateResult(
-                      this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
-                case LATER:
-                  // Defer prompts for DEFAULT_DEFER_DAYS days.
-                  long until =
-                      System.currentTimeMillis()
-                          + java.util.concurrent.TimeUnit.DAYS.toMillis(DEFAULT_DEFER_DAYS);
-                  setDeferUntil(packageName, source, until);
-                  return new UpdateResult(
-                      this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
-                case UPDATE_NOW:
-                  // Caller is responsible for launching the installer and exiting the JVM.
-                  return new UpdateResult(
-                      this, packageName, source, currentVersion, requiredVersion, true, latestVersion);
-                case QUIT:
-                  // Force-update quit: do not persist preferences; treat as not required.
-                  return new UpdateResult(
-                      this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
-                default:
-                  // Defensive: treat unknown result as defer (LATER)
-                  long defUntil =
-                      System.currentTimeMillis()
-                          + java.util.concurrent.TimeUnit.DAYS.toMillis(DEFAULT_DEFER_DAYS);
-                  setDeferUntil(packageName, source, defUntil);
-                  return new UpdateResult(
-                      this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
-              }
-            } catch (IOException e) {
-              throw new CompletionException(e);
-            }
-          });
-    }
+              return new UpdateResult(
+                  this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+          }
+        } catch (IOException e) {
+          throw new CompletionException(e);
+        }
+      });
+}
 
   /**
      * Legacy synchronous overload preserved for compatibility.
