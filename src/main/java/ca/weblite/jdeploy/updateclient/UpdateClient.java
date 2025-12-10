@@ -110,217 +110,251 @@ public class UpdateClient {
   private enum UpdateDecision {
     UPDATE_NOW,
     LATER,
-    IGNORE
+    IGNORE,
+    QUIT
   }
 
   /**
-   * Asynchronous version of requireVersion.
-   *
-   * <p>Returns a {@link java.util.concurrent.CompletableFuture} that completes with an {@link
-   * UpdateResult} describing the outcome of the check. The returned {@link UpdateResult} will
-   * indicate whether an update is required via {@link UpdateResult#isRequired()}.
-   *
-   * <p>Behavioral note: the returned {@link CompletableFuture} completes only after the update
-   * decision has been resolved. In normal (non-headless) environments the user will be shown a UI
-   * prompt and must select one of the options: Update Now, Later, or Ignore. The future completes
-   * after the user makes that choice and the corresponding preference (ignore/defer) is persisted.
-   * When running in a headless environment the prompt is skipped and a conservative default (defer /
-   * Later) is used and the future completes immediately with the appropriate {@link UpdateResult}.
-   *
-   * <p>If the user selects "Update Now" then the returned {@link UpdateResult} will have {@code
-   * isRequired() == true}. Callers may then invoke {@link UpdateResult#launchInstaller()} to
-   * download and launch the installer. Important: {@link UpdateResult#launchInstaller()} does NOT
-   * call {@code System.exit(0)}; callers are responsible for performing any necessary cleanup and
-   * exiting the JVM if desired.
-   *
-   * <p>The method preserves previous gating semantics: {@code jdeploy.app.version} must be set for
-   * checks to proceed, the launcher-reported version ({@code jdeploy.launcher.app.version}) is used
-   * as the canonical current version for comparisons, and preferences are consulted for ignore/defer
-   * behavior.
-   *
-   * <p>Any IO errors will complete the future exceptionally with an {@link IOException}.
-   *
-   * <p>Example usage showing an inline handler that launches the installer and then exits:
-   *
-   * <pre>{@code
-   * client.requireVersionAsync("2.0.0", params)
-   *       .thenApply(result -> {
-   *           if (result.isRequired()) {
-   *               try {
-   *                   result.launchInstaller();
-   *                   // perform cleanup (save state, flush logs, etc.)
-   *                   System.exit(0);
-   *               } catch (IOException e) {
-   *                   // handle download/launch failure as appropriate
-   *               }
-   *           }
-   *           return result;
-   *       });
-   * }</pre>
-   *
-   * <p>Behavior summary:
-   * <ul>
-   *   <li>The returned future completes only after the user has been prompted (except in headless mode)
-   *       and has made a choice (Update Now, Later, or Ignore).</li>
-   *   <li>If the user chose Update Now then {@link UpdateResult#isRequired()} will be {@code true}
-   *       and callers may invoke {@link UpdateResult#launchInstaller()}.</li>
-   *   <li>{@link UpdateResult#launchInstaller()} does NOT call {@code System.exit(0)}; callers are
-   *       responsible for any cleanup and for exiting the JVM if desired.</li>
-   * </ul>
-   *
-   * @param requiredVersion the required version string
-   * @param params parameters describing the application (packageName is required)
-   * @return CompletableFuture completing with UpdateResult
-   */
-  public CompletableFuture<UpdateResult> requireVersionAsync(
-      final String requiredVersion, final UpdateParameters params) {
-    return CompletableFuture.supplyAsync(
-        () -> {
-          try {
-            if (requiredVersion == null || requiredVersion.isEmpty()) {
-              return new UpdateResult(this, null, null, null, null, false);
-            }
-            if (params == null) {
-              throw new IllegalArgumentException("params must not be null");
-            }
-
-            // Prerequisite: the app must be running under the jdeploy launcher.
-            // If jdeploy.app.version is not set, do not perform update checks.
-            String appVersionProperty = System.getProperty("jdeploy.app.version");
-            if (appVersionProperty == null || appVersionProperty.isEmpty()) {
-              // Not running via jdeploy launcher; preserve legacy behaviour by doing nothing.
-              return new UpdateResult(this, params.getPackageName(), params.getSource(), null,
-                  requiredVersion, false);
-            }
-
-            // Use the launcher's reported app version for comparisons. Default to "0.0.0" if missing.
-            String launcherVersion = System.getProperty("jdeploy.launcher.app.version");
-            if (launcherVersion == null || launcherVersion.isEmpty()) {
-              launcherVersion = "0.0.0";
-            }
-
-            // Use launcherVersion as the canonical currentVersion for later logic.
-            String currentVersion = launcherVersion;
-
-            // If branch version or already >= requiredVersion, return early (no update required).
-            if (isBranchVersion(currentVersion) || compareVersion(currentVersion, requiredVersion) >= 0) {
-              return new UpdateResult(this, params.getPackageName(), params.getSource(), currentVersion,
-                  requiredVersion, false);
-            }
-
-            String packageName = params.getPackageName();
-            String source = params.getSource() == null ? "" : params.getSource();
-
-            // Respect early preference gating (ignore / defer). If gating says skip, return not required.
-            if (shouldSkipPrompt(packageName, source, requiredVersion)) {
-              return new UpdateResult(this, packageName, source, currentVersion, requiredVersion, false);
-            }
-
-            // Determine whether to include prereleases in the lookup.
-            boolean isPrerelease = "true".equals(System.getProperty("jdeploy.prerelease", "false"));
-
-            // Fetch latest version (network). Any IO error will be wrapped and complete exceptionally.
-            String latestVersion = findLatestVersion(packageName, source, isPrerelease);
-
-            // If the latest version was already explicitly ignored, do not require update.
-            String ignoredVersion = getIgnoredVersion(packageName, source);
-            if (ignoredVersion != null && !ignoredVersion.isEmpty() && ignoredVersion.equals(latestVersion)) {
-              return new UpdateResult(this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
-            }
-
-            // At this point, we have a candidate latestVersion and the launcher is older than requiredVersion.
-            // Prompt the user to decide whether to update now, later, or ignore this version.
-            // promptForUpdate handles headless mode and EDT invocation.
-            UpdateDecision decision =
-                promptForUpdate(packageName, params.getAppTitle(), currentVersion, requiredVersion);
-
-            switch (decision) {
-              case IGNORE:
-                // Persist the ignored version for this package+source and return not required.
-                setIgnoredVersion(packageName, source, requiredVersion);
-                return new UpdateResult(
-                    this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
-              case LATER:
-                // Defer prompts for DEFAULT_DEFER_DAYS days.
-                long until =
-                    System.currentTimeMillis()
-                        + java.util.concurrent.TimeUnit.DAYS.toMillis(DEFAULT_DEFER_DAYS);
-                setDeferUntil(packageName, source, until);
-                return new UpdateResult(
-                    this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
-              case UPDATE_NOW:
-                // Caller is responsible for launching the installer and exiting the JVM.
-                return new UpdateResult(
-                    this, packageName, source, currentVersion, requiredVersion, true, latestVersion);
-              default:
-                // Defensive: treat unknown result as defer (LATER)
-                long defUntil =
-                    System.currentTimeMillis()
-                        + java.util.concurrent.TimeUnit.DAYS.toMillis(DEFAULT_DEFER_DAYS);
-                setDeferUntil(packageName, source, defUntil);
-                return new UpdateResult(
-                    this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
-            }
-          } catch (IOException e) {
-            throw new CompletionException(e);
-          }
-        });
-  }
-
-  /**
-   * Legacy synchronous overload preserved for compatibility.
-   *
-   * <p>Deprecated: prefer {@link #requireVersionAsync(String, UpdateParameters)} which returns an
-   * {@link java.util.concurrent.CompletableFuture} with an {@link UpdateResult} that callers can use
-   * to control installer launch and shutdown behavior.
-   *
-   * <p>This legacy method delegates to {@link #requireVersionAsync(String, UpdateParameters)},
-   * blocks for the result, and — if an update is required — prompts the user using the existing
-   * Swing prompt flow. If the user chooses:
-   * <ul>
-   *   <li>IGNORE: the ignored version is persisted</li>
-   *   <li>LATER: a defer-until timestamp DEFAULT_DEFER_DAYS into the future is persisted</li>
-   *   <li>UPDATE_NOW: the installer is launched and an attempt to call System.exit(0) is made to
-   *       preserve legacy behavior</li>
-   * </ul>
-   *
-   * @param requiredVersion the required version string
-   * @param params parameters describing the application (packageName is required)
-   * @throws IOException if the async check or installer download fails
-   * @deprecated Use {@link #requireVersionAsync(String, UpdateParameters)} and {@link UpdateResult#launchInstaller()}
-   *     to decouple update checks from installer launch and JVM shutdown.
-   */
-  @Deprecated
-  public void requireVersion(String requiredVersion, UpdateParameters params) throws IOException {
-    try {
-      // Block on the async check to preserve legacy synchronous behavior.
-      UpdateResult res = requireVersionAsync(requiredVersion, params).get();
-
-      // If no update is required (includes preference gating), return early.
-      if (res == null || !res.isRequired()) {
-        return;
-      }
-
-      // For legacy synchronous behavior: if an update is required, launch the installer and
-      // attempt to exit the JVM. Preference persistence and prompting are handled by the async
-      // flow / callers; avoid duplicating prompts here.
-      res.launchInstaller();
-      try {
-        System.exit(0);
-      } catch (SecurityException se) {
-        System.err.println("requireVersion: unable to exit JVM after launching installer: " + se.getMessage());
-      }
-    } catch (InterruptedException ie) {
-      Thread.currentThread().interrupt();
-      throw new IOException("Interrupted while waiting for update check", ie);
-    } catch (java.util.concurrent.ExecutionException ee) {
-      Throwable cause = ee.getCause();
-      if (cause instanceof IOException) {
-        throw (IOException) cause;
-      }
-      throw new IOException("Failed to perform update check", ee);
+     * Asynchronous version of requireVersion.
+     *
+     * <p>Returns a {@link java.util.concurrent.CompletableFuture} that completes with an {@link
+     * UpdateResult} describing the outcome of the check. The returned {@link UpdateResult} will
+     * indicate whether an update is required via {@link UpdateResult#isRequired()}.
+     *
+     * <p>Behavioral note: the returned {@link CompletableFuture} completes only after the update
+     * decision has been resolved. In normal (non-headless) environments the user will be shown a UI
+     * prompt and must select one of the options: Update Now, Later, or Ignore. The future completes
+     * after the user makes that choice and the corresponding preference (ignore/defer) is persisted.
+     * When running in a headless environment the prompt is skipped and a conservative default (defer /
+     * Later) is used and the future completes immediately with the appropriate {@link UpdateResult}.
+     *
+     * <p>If the user selects "Update Now" then the returned {@link UpdateResult} will have {@code
+     * isRequired() == true}. Callers may then invoke {@link UpdateResult#launchInstaller()} to
+     * download and launch the installer. Important: {@link UpdateResult#launchInstaller()} does NOT
+     * call {@code System.exit(0)}; callers are responsible for performing any necessary cleanup and
+     * exiting the JVM if desired.
+     *
+     * <p>The method preserves previous gating semantics: {@code jdeploy.app.version} must be set for
+     * checks to proceed, the launcher-reported version ({@code jdeploy.launcher.app.version}) is used
+     * as the canonical current version for comparisons, and preferences are consulted for ignore/defer
+     * behavior.
+     *
+     * <p>Any IO errors will complete the future exceptionally with an {@link IOException}.
+     *
+     * <p>Example usage showing an inline handler that launches the installer and then exits:
+     *
+     * <pre>{@code
+     * client.requireVersionAsync("2.0.0", params)
+     *       .thenApply(result -> {
+     *           if (result.isRequired()) {
+     *               try {
+     *                   result.launchInstaller();
+     *                   // perform cleanup (save state, flush logs, etc.)
+     *                   System.exit(0);
+     *               } catch (IOException e) {
+     *                   // handle download/launch failure as appropriate
+     *               }
+     *           }
+     *           return result;
+     *       });
+     * }</pre>
+     *
+     * <p>Behavior summary:
+     * <ul>
+     *   <li>The returned future completes only after the user has been prompted (except in headless mode)
+     *       and has made a choice (Update Now, Later, or Ignore).</li>
+     *   <li>If the user chose Update Now then {@link UpdateResult#isRequired()} will be {@code true}
+     *       and callers may invoke {@link UpdateResult#launchInstaller()}.</li>
+     *   <li>{@link UpdateResult#launchInstaller()} does NOT call {@code System.exit(0)}; callers are
+     *       responsible for any cleanup and for exiting the JVM if desired.</li>
+     * </ul>
+     *
+     * @param requiredVersion the required version string
+     * @param params parameters describing the application (packageName is required)
+     * @return CompletableFuture completing with UpdateResult
+     */
+    public CompletableFuture<UpdateResult> requireVersionAsync(
+        final String requiredVersion, final UpdateParameters params) {
+      // Preserve backward-compatible two-argument behavior by delegating to the new three-arg overload
+      return requireVersionAsync(requiredVersion, params, false);
     }
-  }
+
+    /**
+     * New overload that supports forcing the update UI to only allow updating or quitting.
+     *
+     * @param requiredVersion the required version string
+     * @param params parameters describing the application (packageName is required)
+     * @param forceUpdate if true, bypass ignore/defer gating and present only Update Now / Quit options
+     * @return CompletableFuture completing with UpdateResult
+     */
+    public CompletableFuture<UpdateResult> requireVersionAsync(
+        final String requiredVersion, final UpdateParameters params, final boolean forceUpdate) {
+      return CompletableFuture.supplyAsync(
+          () -> {
+            try {
+              if (requiredVersion == null || requiredVersion.isEmpty()) {
+                return new UpdateResult(this, null, null, null, null, false);
+              }
+              if (params == null) {
+                throw new IllegalArgumentException("params must not be null");
+              }
+
+              // Prerequisite: the app must be running under the jdeploy launcher.
+              // If jdeploy.app.version is not set, do not perform update checks.
+              String appVersionProperty = System.getProperty("jdeploy.app.version");
+              if (appVersionProperty == null || appVersionProperty.isEmpty()) {
+                // Not running via jdeploy launcher; preserve legacy behaviour by doing nothing.
+                return new UpdateResult(this, params.getPackageName(), params.getSource(), null,
+                    requiredVersion, false);
+              }
+
+              // Use the launcher's reported app version for comparisons. Default to "0.0.0" if missing.
+              String launcherVersion = System.getProperty("jdeploy.launcher.app.version");
+              if (launcherVersion == null || launcherVersion.isEmpty()) {
+                launcherVersion = "0.0.0";
+              }
+
+              // Use launcherVersion as the canonical currentVersion for later logic.
+              String currentVersion = launcherVersion;
+
+              // If branch version or already >= requiredVersion, return early (no update required).
+              if (isBranchVersion(currentVersion) || compareVersion(currentVersion, requiredVersion) >= 0) {
+                return new UpdateResult(this, params.getPackageName(), params.getSource(), currentVersion,
+                    requiredVersion, false);
+              }
+
+              String packageName = params.getPackageName();
+              String source = params.getSource() == null ? "" : params.getSource();
+
+              // Respect early preference gating (ignore / defer) unless forceUpdate is true.
+              if (!forceUpdate && shouldSkipPrompt(packageName, source, requiredVersion)) {
+                return new UpdateResult(this, packageName, source, currentVersion, requiredVersion, false);
+              }
+
+              // Determine whether to include prereleases in the lookup.
+              boolean isPrerelease = "true".equals(System.getProperty("jdeploy.prerelease", "false"));
+
+              // Fetch latest version (network). Any IO error will be wrapped and complete exceptionally.
+              String latestVersion = findLatestVersion(packageName, source, isPrerelease);
+
+              // If the latest version was already explicitly ignored, do not require update (unless forcing).
+              String ignoredVersion = getIgnoredVersion(packageName, source);
+              if (!forceUpdate && ignoredVersion != null && !ignoredVersion.isEmpty() && ignoredVersion.equals(latestVersion)) {
+                return new UpdateResult(this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+              }
+
+              // At this point, we have a candidate latestVersion and the launcher is older than requiredVersion.
+              // Prompt the user to decide whether to update now or quit (or later/ignore in legacy flow).
+              UpdateDecision decision =
+                  promptForUpdate(packageName, params.getAppTitle(), currentVersion, requiredVersion, forceUpdate);
+
+              switch (decision) {
+                case IGNORE:
+                  // Persist the ignored version for this package+source and return not required.
+                  setIgnoredVersion(packageName, source, requiredVersion);
+                  return new UpdateResult(
+                      this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+                case LATER:
+                  // Defer prompts for DEFAULT_DEFER_DAYS days.
+                  long until =
+                      System.currentTimeMillis()
+                          + java.util.concurrent.TimeUnit.DAYS.toMillis(DEFAULT_DEFER_DAYS);
+                  setDeferUntil(packageName, source, until);
+                  return new UpdateResult(
+                      this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+                case UPDATE_NOW:
+                  // Caller is responsible for launching the installer and exiting the JVM.
+                  return new UpdateResult(
+                      this, packageName, source, currentVersion, requiredVersion, true, latestVersion);
+                case QUIT:
+                  // Force-update quit: do not persist preferences; treat as not required.
+                  return new UpdateResult(
+                      this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+                default:
+                  // Defensive: treat unknown result as defer (LATER)
+                  long defUntil =
+                      System.currentTimeMillis()
+                          + java.util.concurrent.TimeUnit.DAYS.toMillis(DEFAULT_DEFER_DAYS);
+                  setDeferUntil(packageName, source, defUntil);
+                  return new UpdateResult(
+                      this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+              }
+            } catch (IOException e) {
+              throw new CompletionException(e);
+            }
+          });
+    }
+
+  /**
+     * Legacy synchronous overload preserved for compatibility.
+     *
+     * <p>Deprecated: prefer {@link #requireVersionAsync(String, UpdateParameters)} which returns an
+     * {@link java.util.concurrent.CompletableFuture} with an {@link UpdateResult} that callers can use
+     * to control installer launch and shutdown behavior.
+     *
+     * <p>This legacy method delegates to {@link #requireVersionAsync(String, UpdateParameters)},
+     * blocks for the result, and — if an update is required — prompts the user using the existing
+     * Swing prompt flow. If the user chooses:
+     * <ul>
+     *   <li>IGNORE: the ignored version is persisted</li>
+     *   <li>LATER: a defer-until timestamp DEFAULT_DEFER_DAYS into the future is persisted</li>
+     *   <li>UPDATE_NOW: the installer is launched and an attempt to call System.exit(0) is made to
+     *       preserve legacy behavior</li>
+     * </ul>
+     *
+     * @param requiredVersion the required version string
+     * @param params parameters describing the application (packageName is required)
+     * @throws IOException if the async check or installer download fails
+     * @deprecated Use {@link #requireVersionAsync(String, UpdateParameters)} and {@link UpdateResult#launchInstaller()}
+     *     to decouple update checks from installer launch and JVM shutdown.
+     */
+    @Deprecated
+    public void requireVersion(String requiredVersion, UpdateParameters params) throws IOException {
+      // Delegate to the new overload with forceUpdate=false to preserve legacy behavior.
+      requireVersion(requiredVersion, params, false);
+    }
+
+    /**
+     * New synchronous overload that accepts the forceUpdate flag. When forceUpdate is true, ignore/defer
+     * preference gating is bypassed and the user is presented only Update Now / Quit options.
+     *
+     * @param requiredVersion required version string
+     * @param params parameters describing the application
+     * @param forceUpdate if true, present only Update Now and Quit, bypass preference gating
+     * @throws IOException if the async check or installer download fails
+     * @deprecated Use {@link #requireVersionAsync(String, UpdateParameters, boolean)} instead
+     */
+    @Deprecated
+    public void requireVersion(String requiredVersion, UpdateParameters params, boolean forceUpdate) throws IOException {
+      try {
+        // Block on the async check to preserve legacy synchronous behavior.
+        UpdateResult res = requireVersionAsync(requiredVersion, params, forceUpdate).get();
+
+        // If no update is required (includes preference gating), return early.
+        if (res == null || !res.isRequired()) {
+          return;
+        }
+
+        // For legacy synchronous behavior: if an update is required, launch the installer and
+        // attempt to exit the JVM. Preference persistence and prompting are handled by the async
+        // flow / callers; avoid duplicating prompts here.
+        res.launchInstaller();
+        try {
+          System.exit(0);
+        } catch (SecurityException se) {
+          System.err.println("requireVersion: unable to exit JVM after launching installer: " + se.getMessage());
+        }
+      } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+        throw new IOException("Interrupted while waiting for update check", ie);
+      } catch (java.util.concurrent.ExecutionException ee) {
+        Throwable cause = ee.getCause();
+        if (cause instanceof IOException) {
+          throw (IOException) cause;
+        }
+        throw new IOException("Failed to perform update check", ee);
+      }
+    }
 
   /**
    * Holds the outcome of an update check. If {@code required} is true then the caller may invoke
@@ -401,80 +435,109 @@ public class UpdateClient {
   }
 
   /**
-   * Prompts the user to update the application using Swing dialog. Returns a tri-state decision:
-   * UPDATE_NOW, LATER, IGNORE.
-   *
-   * @return UpdateDecision chosen by user
-   */
-  private UpdateDecision promptForUpdate(
-      String packageName, String appTitle, String currentVersion, String requiredVersion) {
-    final UpdateDecision[] result = new UpdateDecision[] {UpdateDecision.LATER};
+     * Prompts the user to update the application using Swing dialog. Returns a tri-state decision:
+     * UPDATE_NOW, LATER, IGNORE, or QUIT. When forceUpdate=true the prompt shows only Update Now and Quit.
+     *
+     * @return UpdateDecision chosen by user
+     */
+    private UpdateDecision promptForUpdate(
+        String packageName, String appTitle, String currentVersion, String requiredVersion, boolean forceUpdate) {
+      final UpdateDecision[] result = new UpdateDecision[] {UpdateDecision.LATER};
 
-    // If running in a headless environment, we cannot show UI — default to LATER.
-    try {
-      if (GraphicsEnvironment.isHeadless()) {
-        return UpdateDecision.LATER;
-      }
-    } catch (Exception e) {
-      // If detection fails for any reason, be conservative and defer the update.
-      return UpdateDecision.LATER;
-    }
-
-    Runnable r =
-        () -> {
-          String title = (appTitle != null && !appTitle.isEmpty()) ? appTitle : packageName;
-          String message =
-              title
-                  + " has an available update.\n\n"
-                  + "Current version: "
-                  + (currentVersion != null ? currentVersion : "unknown")
-                  + "\n"
-                  + "Required version: "
-                  + (requiredVersion != null ? requiredVersion : "unknown")
-                  + "\n\n"
-                  + "Would you like to update now?";
-
-          Object[] options = new Object[] {"Update Now", "Later", "Ignore This Version"};
-          int opt =
-              JOptionPane.showOptionDialog(
-                  null,
-                  message,
-                  "Update Available - " + title,
-                  JOptionPane.DEFAULT_OPTION,
-                  JOptionPane.INFORMATION_MESSAGE,
-                  null,
-                  options,
-                  options[0]);
-
-          switch (opt) {
-            case 0:
-              result[0] = UpdateDecision.UPDATE_NOW;
-              break;
-            case 1:
-              result[0] = UpdateDecision.LATER;
-              break;
-            case 2:
-              result[0] = UpdateDecision.IGNORE;
-              break;
-            default:
-              // Treat closed dialog or unexpected return as LATER
-              result[0] = UpdateDecision.LATER;
-          }
-        };
-
-    if (SwingUtilities.isEventDispatchThread()) {
-      r.run();
-    } else {
+      // If running in a headless environment, we cannot show UI.
       try {
-        SwingUtilities.invokeAndWait(r);
+        if (GraphicsEnvironment.isHeadless()) {
+          if (forceUpdate) {
+            // In a forced update scenario and headless environment, prefer quitting rather than
+            // silently deferring, since the caller requested that updates be enforced.
+            return UpdateDecision.QUIT;
+          } else {
+            return UpdateDecision.LATER;
+          }
+        }
       } catch (Exception e) {
-        // If UI fails, default to LATER to avoid forcing update
+        // If detection fails for any reason, be conservative:
+        if (forceUpdate) {
+          return UpdateDecision.QUIT;
+        }
         return UpdateDecision.LATER;
       }
-    }
 
-    return result[0];
-  }
+      Runnable r =
+          () -> {
+            String title = (appTitle != null && !appTitle.isEmpty()) ? appTitle : packageName;
+            String message =
+                title
+                    + " has an available update.\n\n"
+                    + "Current version: "
+                    + (currentVersion != null ? currentVersion : "unknown")
+                    + "\n"
+                    + "Required version: "
+                    + (requiredVersion != null ? requiredVersion : "unknown")
+                    + "\n\n"
+                    + "Would you like to update now?";
+
+            final Object[] options;
+            if (forceUpdate) {
+              options = new Object[] {"Update Now", "Quit"};
+            } else {
+              options = new Object[] {"Update Now", "Later", "Ignore This Version"};
+            }
+
+            int opt =
+                JOptionPane.showOptionDialog(
+                    null,
+                    message,
+                    "Update Available - " + title,
+                    JOptionPane.DEFAULT_OPTION,
+                    JOptionPane.INFORMATION_MESSAGE,
+                    null,
+                    options,
+                    options[0]);
+
+            if (forceUpdate) {
+              switch (opt) {
+                case 0:
+                  result[0] = UpdateDecision.UPDATE_NOW;
+                  break;
+                case 1:
+                  result[0] = UpdateDecision.QUIT;
+                  break;
+                default:
+                  // Treat closed dialog or unexpected return as QUIT for forced updates
+                  result[0] = UpdateDecision.QUIT;
+              }
+            } else {
+              switch (opt) {
+                case 0:
+                  result[0] = UpdateDecision.UPDATE_NOW;
+                  break;
+                case 1:
+                  result[0] = UpdateDecision.LATER;
+                  break;
+                case 2:
+                  result[0] = UpdateDecision.IGNORE;
+                  break;
+                default:
+                  // Treat closed dialog or unexpected return as LATER
+                  result[0] = UpdateDecision.LATER;
+              }
+            }
+          };
+
+      if (SwingUtilities.isEventDispatchThread()) {
+        r.run();
+      } else {
+        try {
+          SwingUtilities.invokeAndWait(r);
+        } catch (Exception e) {
+          // If UI fails, default to LATER or QUIT based on forceUpdate
+          return forceUpdate ? UpdateDecision.QUIT : UpdateDecision.LATER;
+        }
+      }
+
+      return result[0];
+    }
 
   /**
    * Finds latest available version of the package
