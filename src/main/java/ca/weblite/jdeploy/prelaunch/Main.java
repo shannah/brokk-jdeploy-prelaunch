@@ -19,43 +19,38 @@ import java.util.Objects;
  *  - "currentVersion"
  */
 public final class Main {
+    private static final String PACKAGE_NAME = "brokk";
+    private static final String SOURCE = "https://github.com/BrokkAi/brokk";
+    private static final String APP_TITLE = "Brokk";
+    private static final String CURRENT_LAUNCHER_VERSION = "0.17.1";
+    private static final String REQUIRE_LAUNCHER_VERSION = "0.17.2";
+
     private Main() {
         // no-op
     }
 
     public static void main(String[] args) {
-            String packageName = firstNonEmpty(System.getProperty("packageName"), System.getenv("PACKAGE_NAME"), "brokk");
-            String source = firstNonEmpty(System.getProperty("source"), System.getenv("SOURCE"), "https://github.com/BrokkAi/brokk");
-            String appTitle = firstNonEmpty(System.getProperty("appTitle"), null, "Brokk");
-            String currentVersion = firstNonEmpty(System.getProperty("currentVersion"), null, "");
 
-            UpdateParameters params = new UpdateParameters.Builder(packageName)
-                            .source(source)
-                            .appTitle(appTitle)
-                            .currentVersion(currentVersion)
+            if (System.getProperty("jdeploy.app.version") != null) {
+                System.setProperty("jdeploy.launcher.app.version", CURRENT_LAUNCHER_VERSION);
+            }
+            UpdateParameters params = new UpdateParameters.Builder(PACKAGE_NAME)
+                            .source(SOURCE)
+                            .appTitle(APP_TITLE)
+                            .icon(Main.class.getResource("brokk-icon.png"))
                             .build();
 
             UpdateClient client = new UpdateClient();
-            final String requiredVersion = "0.17.3";
+
             final boolean forceUpdate = true;
 
             try {
                     // Direct invocation (no reflection): require update or quit when forceUpdate=true
-                    client.requireVersion(requiredVersion, params, forceUpdate);
+                    client.requireVersion(REQUIRE_LAUNCHER_VERSION, params, forceUpdate);
             } catch (Throwable ex) {
                     System.err.println("Failed to invoke UpdateClient.requireVersion: " + ex);
                     ex.printStackTrace(System.err);
                     System.exit(2);
             }
-    }
-
-    private static String firstNonEmpty(String first, String second, String fallback) {
-        if (isNonEmpty(first)) return first;
-        if (isNonEmpty(second)) return second;
-        return fallback;
-    }
-
-    private static boolean isNonEmpty(String s) {
-        return s != null && !s.trim().isEmpty();
     }
 }

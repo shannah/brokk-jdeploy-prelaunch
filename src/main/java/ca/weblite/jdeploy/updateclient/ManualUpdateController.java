@@ -75,7 +75,6 @@ public final class ManualUpdateController {
         new UpdateParameters.Builder(packageName)
             .source(source)
             .appTitle((appTitle != null && !appTitle.isEmpty()) ? appTitle : packageName)
-            .currentVersion("manual-runner-current-version")
             .build();
 
     // Create client and isolate preferences for this run

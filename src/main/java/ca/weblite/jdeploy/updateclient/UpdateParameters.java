@@ -1,5 +1,7 @@
 package ca.weblite.jdeploy.updateclient;
 
+import java.net.URL;
+
 /**
  * Parameters that describe an application for update checking.
  *
@@ -25,9 +27,6 @@ package ca.weblite.jdeploy.updateclient;
  *       </ul>
  *   <li><b>appTitle</b> (optional) - Human-friendly application title to display in UI prompts. If
  *       not provided, callers or UIs should fall back to {@code packageName}.
- *   <li><b>currentVersion</b> (optional) - The currently-installed version string (e.g. "1.2.3").
- *       If omitted the updater will fall back to the {@code jdeploy.app.version} system property to
- *       preserve legacy behavior.
  * </ul>
  *
  * <p>Because this object supplies all required metadata, the parameters-based workflow requires no
@@ -38,7 +37,6 @@ package ca.weblite.jdeploy.updateclient;
  * UpdateParameters params = new UpdateParameters.Builder("my-package")
  *     .source("https://github.com/Owner/Repo") // Omit or set to empty string for npm-hosted packages
  *     .appTitle("My App")
- *     .currentVersion("1.0.0")
  *     .build();
  * </pre>
  */
@@ -47,7 +45,7 @@ public final class UpdateParameters {
   private final String packageName;
   private final String source;
   private final String appTitle;
-  private final String currentVersion;
+  private final URL icon;
 
   /**
    * Creates a new UpdateParameters instance.
@@ -55,19 +53,17 @@ public final class UpdateParameters {
    * @param packageName The package name (required, non-null, non-empty)
    * @param source The source URL for GitHub-hosted packages, or null/empty for npm
    * @param appTitle Optional application title (may be null)
-   * @param currentVersion Optional installed/current version (may be null)
    * @throws IllegalArgumentException if packageName is null or empty
    */
   public UpdateParameters(
-      String packageName, String source, String appTitle, String currentVersion) {
+      String packageName, String source, String appTitle, URL icon) {
     if (packageName == null || packageName.trim().isEmpty()) {
       throw new IllegalArgumentException("packageName is required and must not be empty");
     }
     this.packageName = packageName;
     this.source = (source == null || source.isEmpty()) ? "" : source;
     this.appTitle = (appTitle == null || appTitle.isEmpty()) ? null : appTitle;
-    this.currentVersion =
-        (currentVersion == null || currentVersion.isEmpty()) ? null : currentVersion;
+    this.icon = icon;
   }
 
   /** Returns the package name (never null). */
@@ -80,17 +76,16 @@ public final class UpdateParameters {
     return source;
   }
 
+  public URL getIcon() {
+    return icon;
+  }
+
   /**
    * Returns the human-friendly application title, or null if not provided. Callers may fall back to
    * {@link #getPackageName()} when null.
    */
   public String getAppTitle() {
     return appTitle;
-  }
-
-  /** Returns the currently-installed version string, or null if unknown. */
-  public String getCurrentVersion() {
-    return currentVersion;
   }
 
   @Override
@@ -105,9 +100,6 @@ public final class UpdateParameters {
         + ", appTitle='"
         + appTitle
         + '\''
-        + ", currentVersion='"
-        + currentVersion
-        + '\''
         + '}';
   }
 
@@ -116,7 +108,7 @@ public final class UpdateParameters {
     private final String packageName;
     private String source;
     private String appTitle;
-    private String currentVersion;
+    private URL icon;
 
     /**
      * Builder constructor with required package name.
@@ -145,15 +137,14 @@ public final class UpdateParameters {
       return this;
     }
 
-    /** Set the currently-installed version string (e.g. "1.2.3"); optional. */
-    public Builder currentVersion(String currentVersion) {
-      this.currentVersion = currentVersion;
+    public Builder icon(URL icon) {
+      this.icon = icon;
       return this;
     }
 
     /** Builds the {@link UpdateParameters} instance. */
     public UpdateParameters build() {
-      return new UpdateParameters(packageName, source, appTitle, currentVersion);
+      return new UpdateParameters(packageName, source, appTitle, icon);
     }
   }
 }

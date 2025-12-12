@@ -60,7 +60,7 @@ public class UpdateClientLauncherVersionTest {
     UpdateClient client = new UpdateClient();
     client.setPreferencesNodeName("/test/jdeploy/" + UUID.randomUUID());
 
-    UpdateParameters params = new UpdateParameters.Builder("dummy").currentVersion("0.1.0").build();
+    UpdateParameters params = new UpdateParameters.Builder("dummy").build();
 
     // Launcher version (2.0.0) is >= required (1.0.0) so requireVersion should return early
     client.requireVersion("1.0.0", params);

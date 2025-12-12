@@ -30,7 +30,6 @@ public class UpdateClientParametersApiTest {
         new UpdateParameters.Builder(packageName)
             .source(source)
             .appTitle("Dummy App")
-            .currentVersion("1.0.0")
             .build();
 
     // Mark this specific requiredVersion as ignored for the package+source

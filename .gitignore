@@ -1,2 +1,4 @@
 .brokk/
 build/
+.idea/
+.gradle/
