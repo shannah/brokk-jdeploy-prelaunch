@@ -87,7 +87,7 @@ public class UpdateClientAsyncApiTest {
     client.setPreferencesNodeName(prefsNodePath);
 
     UpdateParameters params =
-        new UpdateParameters.Builder("dummy").currentVersion("0.1.0").build();
+        new UpdateParameters.Builder("dummy").build();
 
     UpdateClient.UpdateResult result =
         client.requireVersionAsync("1.0.0", params).get();
