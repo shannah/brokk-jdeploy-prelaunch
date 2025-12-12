@@ -23,7 +23,7 @@ public final class Main {
     private static final String SOURCE = "https://github.com/BrokkAi/brokk";
     private static final String APP_TITLE = "Brokk";
     private static final String CURRENT_LAUNCHER_VERSION = "0.17.1";
-    private static final String REQUIRE_LAUNCHER_VERSION = "0.17.2";
+    private static final String REQUIRE_LAUNCHER_VERSION = "0.17.3";
 
     private Main() {
         // no-op
@@ -31,7 +31,7 @@ public final class Main {
 
     public static void main(String[] args) {
 
-            if (System.getProperty("jdeploy.app.version") != null) {
+            if (System.getProperty("jdeploy.launcher.app.version") == null && System.getProperty("jdeploy.app.version") != null) {
                 System.setProperty("jdeploy.launcher.app.version", CURRENT_LAUNCHER_VERSION);
             }
             UpdateParameters params = new UpdateParameters.Builder(PACKAGE_NAME)
