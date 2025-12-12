@@ -254,7 +254,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
           // At this point, we have a candidate latestVersion and the launcher is older than requiredVersion.
           // Prompt the user to decide whether to update now or quit (or later/ignore in legacy flow).
           UpdateDecision decision =
-              promptForUpdate(packageName, params.getAppTitle(), currentVersion, requiredVersion, forceUpdate);
+              promptForUpdate(packageName, params.getAppTitle(), currentVersion, requiredVersion, forceUpdate, params.getIcon());
 
           switch (decision) {
             case IGNORE:
@@ -477,7 +477,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
      * @return UpdateDecision chosen by user
      */
     private UpdateDecision promptForUpdate(
-        String packageName, String appTitle, String currentVersion, String requiredVersion, boolean forceUpdate) {
+        String packageName, String appTitle, String currentVersion, String requiredVersion, boolean forceUpdate, URL icon) {
       final UpdateDecision[] result = new UpdateDecision[] {UpdateDecision.LATER};
 
       // If running in a headless environment, we cannot show UI.
@@ -527,7 +527,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
                     "Update Available - " + title,
                     JOptionPane.DEFAULT_OPTION,
                     JOptionPane.INFORMATION_MESSAGE,
-                    null,
+                    icon != null ? new ImageIcon(icon) : null,
                     options,
                     options[0]);
 
