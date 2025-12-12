@@ -31,7 +31,7 @@ public final class Main {
 
     public static void main(String[] args) {
 
-            if (System.getProperty("jdeploy.launcher.app.version") == null && System.getProperty("jdeploy.app.version") != null) {
+            if (System.getProperty("jdeploy.launcher.app.version") == null) {
                 System.setProperty("jdeploy.launcher.app.version", CURRENT_LAUNCHER_VERSION);
             }
             UpdateParameters params = new UpdateParameters.Builder(PACKAGE_NAME)
