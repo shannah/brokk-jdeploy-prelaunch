@@ -25,7 +25,7 @@ public final class Main {
     private static final String SOURCE = "https://github.com/BrokkAi/brokk";
     private static final String APP_TITLE = "Brokk";
     private static final String CURRENT_LAUNCHER_VERSION = "0.17.1";
-    private static final String REQUIRE_LAUNCHER_VERSION = "0.17.3";
+    private static final String REQUIRE_LAUNCHER_VERSION = "0.18.0";
 
     private Main() {
         // no-op
