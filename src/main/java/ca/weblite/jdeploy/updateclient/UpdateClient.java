@@ -226,7 +226,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
           String currentVersion = launcherVersion;
           System.out.println("Current launcher version: " + currentVersion);
           // If branch version or already >= requiredVersion, return early (no update required).
-          if (isBranchVersion(currentVersion) || compareVersion(currentVersion, requiredVersion) >= 0) {
+          if (isBranchVersion(appVersionProperty) || isBranchVersion(currentVersion) || compareVersion(currentVersion, requiredVersion) >= 0) {
             return new UpdateResult(
                 this, params.getPackageName(), params.getSource(), currentVersion, requiredVersion, false);
           }

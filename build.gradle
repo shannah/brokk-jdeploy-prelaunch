@@ -2,8 +2,8 @@ plugins {
     id 'java-library'
     id 'maven-publish'
     id 'signing'
-    // Use a Shadow plugin version compatible with a wider range of Gradle/JVM setups
-    id 'com.github.johnrengelman.shadow' version '7.1.2'
+    // Use a Shadow plugin version compatible with Java 21
+    id 'com.gradleup.shadow' version '8.3.5'
 }
 
 group = 'ca.weblite'
@@ -14,8 +14,8 @@ repositories {
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_1_8
-    targetCompatibility = JavaVersion.VERSION_1_8
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 
     // Enable publication of sources and javadoc jars
     withJavadocJar()
@@ -29,8 +29,8 @@ dependencies {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
-    if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_1_9)) {
-        options.release.set(8)
+    if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_22)) {
+        options.release.set(21)
     }
 }
 

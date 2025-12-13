@@ -3,8 +3,10 @@ package ca.weblite.jdeploy.prelaunch;
 import ca.weblite.jdeploy.updateclient.UpdateClient;
 import ca.weblite.jdeploy.updateclient.UpdateParameters;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.Objects;
+import java.util.stream.Stream;
 
 /**
  * Small launcher that constructs UpdateClient and UpdateParameters and invokes
@@ -30,9 +32,20 @@ public final class Main {
     }
 
     public static void main(String[] args) {
+            // There was a bug in jdeploy 5.5.11 that placed the jdeploy.launcher.app.version after the jar file
+            // which places it incorrectly. So we set it here if not already set.
+            var launcherAppVersionArgs = Stream.of(args)
+                    .filter(s -> s.startsWith("-Djdeploy.launcher.app.version="))
+                    .findAny();
 
             if (System.getProperty("jdeploy.launcher.app.version") == null) {
-                System.setProperty("jdeploy.launcher.app.version", CURRENT_LAUNCHER_VERSION);
+                if (launcherAppVersionArgs.isPresent()) {
+                    var launcherVersionParam = launcherAppVersionArgs.get();
+                    var launcherVersion = launcherVersionParam.substring(launcherVersionParam.indexOf('=') + 1);
+                    System.setProperty("jdeploy.launcher.app.version", launcherVersion);
+                } else {
+                    System.setProperty("jdeploy.launcher.app.version", CURRENT_LAUNCHER_VERSION);
+                }
             }
             UpdateParameters params = new UpdateParameters.Builder(PACKAGE_NAME)
                             .source(SOURCE)
