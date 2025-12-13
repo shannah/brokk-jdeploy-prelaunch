@@ -224,7 +224,6 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
 
           // Use launcherVersion as the canonical currentVersion for later logic.
           String currentVersion = launcherVersion;
-          System.out.println("Current launcher version: " + currentVersion);
           // If branch version or already >= requiredVersion, return early (no update required).
           if (isBranchVersion(appVersionProperty) || isBranchVersion(currentVersion) || compareVersion(currentVersion, requiredVersion) >= 0) {
             return new UpdateResult(
@@ -900,7 +899,6 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
           try {
             ProcessBuilder pb = new ProcessBuilder("open", appBundle.toString());
             pb.start();
-            System.out.println("runInstaller: Launched .app bundle: " + appBundle);
           } catch (IOException e) {
             System.err.println(
                 "runInstaller: IOException while launching .app bundle: " + e.getMessage());
@@ -914,7 +912,6 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
           try {
             ProcessBuilder pb = new ProcessBuilder("open", installerPath);
             pb.start();
-            System.out.println("runInstaller: Opened macOS installer: " + installerPath);
           } catch (IOException e) {
             System.err.println("runInstaller: failed to open macOS installer: " + e.getMessage());
             e.printStackTrace();
@@ -926,7 +923,6 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
         try {
           ProcessBuilder pb = new ProcessBuilder("open", installerPath);
           pb.start();
-          System.out.println("runInstaller: Opened macOS file with 'open': " + installerPath);
         } catch (IOException e) {
           System.err.println("runInstaller: failed to open file on macOS: " + e.getMessage());
           e.printStackTrace();
@@ -937,7 +933,6 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
           ProcessBuilder pb = new ProcessBuilder("cmd", "/c", "start", "", installerPath);
           // Do not inheritIO for cmd start; it will detach the process
           pb.start();
-          System.out.println("runInstaller: Launched installer on Windows: " + installerPath);
         } catch (IOException e) {
           System.err.println(
               "runInstaller: failed to launch installer on Windows: " + e.getMessage());
@@ -977,7 +972,6 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
             ProcessBuilder pb = new ProcessBuilder(decompressed.toString());
             pb.inheritIO();
             pb.start();
-            System.out.println("runInstaller: Launched decompressed installer: " + decompressed);
           } catch (IOException e) {
             System.err.println(
                 "runInstaller: failed to execute decompressed installer: " + e.getMessage());
@@ -991,7 +985,6 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
           ProcessBuilder pb = new ProcessBuilder("xdg-open", installerPath);
           pb.inheritIO();
           pb.start();
-          System.out.println("runInstaller: Launched installer via xdg-open: " + installerPath);
         } catch (IOException xdgEx) {
           // xdg-open not available or failed; if file is executable, try to run it
           if (installer.canExecute()) {
@@ -999,7 +992,6 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
               ProcessBuilder pb2 = new ProcessBuilder(installerPath);
               pb2.inheritIO();
               pb2.start();
-              System.out.println("runInstaller: Launched executable installer: " + installerPath);
             } catch (IOException execEx) {
               System.err.println(
                   "runInstaller: failed to execute installer directly: " + execEx.getMessage());
