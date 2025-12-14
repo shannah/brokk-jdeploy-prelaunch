@@ -201,7 +201,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
       () -> {
         try {
           if (requiredVersion == null || requiredVersion.isEmpty()) {
-            return new UpdateResult(this, null, null, null, null, false);
+            return new UpdateResult(this, null, null, false,  null, null, false);
           }
           if (params == null) {
             throw new IllegalArgumentException("params must not be null");
@@ -213,7 +213,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
           if (appVersionProperty == null || appVersionProperty.isEmpty()) {
             // Not running via jdeploy launcher; preserve legacy behaviour by doing nothing.
             return new UpdateResult(
-                this, params.getPackageName(), params.getSource(), null, requiredVersion, false);
+                this, params.getPackageName(), params.getSource(), false, null, requiredVersion, false);
           }
 
           // Use the launcher's reported app version for comparisons. Default to "0.0.0" if missing.
@@ -227,7 +227,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
           // If branch version or already >= requiredVersion, return early (no update required).
           if (isBranchVersion(appVersionProperty) || isBranchVersion(currentVersion) || compareVersion(currentVersion, requiredVersion) >= 0) {
             return new UpdateResult(
-                this, params.getPackageName(), params.getSource(), currentVersion, requiredVersion, false);
+                this, params.getPackageName(), params.getSource(), false, currentVersion, requiredVersion, false);
           }
 
           String packageName = params.getPackageName();
@@ -235,7 +235,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
 
           // Respect early preference gating (ignore / defer) unless forceUpdate is true.
           if (!forceUpdate && shouldSkipPrompt(packageName, source, requiredVersion)) {
-            return new UpdateResult(this, packageName, source, currentVersion, requiredVersion, false);
+            return new UpdateResult(this, packageName, source, false, currentVersion, requiredVersion, false);
           }
 
           // Determine whether to include prereleases in the lookup.
@@ -247,7 +247,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
           // If the latest version was already explicitly ignored, do not require update (unless forcing).
           String ignoredVersion = getIgnoredVersion(packageName, source);
           if (!forceUpdate && ignoredVersion != null && !ignoredVersion.isEmpty() && ignoredVersion.equals(latestVersion)) {
-            return new UpdateResult(this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+            return new UpdateResult(this, packageName, source, isPrerelease, currentVersion, requiredVersion, false, latestVersion);
           }
 
           // At this point, we have a candidate latestVersion and the launcher is older than requiredVersion.
@@ -263,7 +263,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
                 setIgnoredVersion(packageName, source, requiredVersion);
               }
               return new UpdateResult(
-                  this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+                  this, packageName, source, isPrerelease, currentVersion, requiredVersion, false, latestVersion);
 
             case LATER:
               // Defer prompts for DEFAULT_DEFER_DAYS days.
@@ -275,12 +275,12 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
                 setDeferUntil(packageName, source, until);
               }
               return new UpdateResult(
-                  this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+                  this, packageName, source, isPrerelease, currentVersion, requiredVersion, false, latestVersion);
 
             case UPDATE_NOW:
               // Caller is responsible for launching the installer and exiting the JVM.
               return new UpdateResult(
-                  this, packageName, source, currentVersion, requiredVersion, true, latestVersion);
+                  this, packageName, source, isPrerelease, currentVersion, requiredVersion, true, latestVersion);
 
             case QUIT:
               // Map QUIT to the LATER outcome but do not persist any preferences when this is a
@@ -292,7 +292,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
                 setDeferUntil(packageName, source, until);
               }
               return new UpdateResult(
-                  this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+                  this, packageName, source, isPrerelease, currentVersion, requiredVersion, false, latestVersion);
 
             default:
               // Defensive: treat unknown result as defer (LATER)
@@ -303,7 +303,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
                 setDeferUntil(packageName, source, defUntil);
               }
               return new UpdateResult(
-                  this, packageName, source, currentVersion, requiredVersion, false, latestVersion);
+                  this, packageName, source, isPrerelease, currentVersion, requiredVersion, false, latestVersion);
           }
         } catch (IOException e) {
           throw new CompletionException(e);
@@ -400,21 +400,23 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
     private final UpdateClient owner;
     private final String packageName;
     private final String source;
+    private final boolean prerelease;
     private final String currentVersion;
     private final String requiredVersion;
     private final String latestVersion;
     private final boolean required;
 
-    UpdateResult(UpdateClient owner, String packageName, String source, String currentVersion,
+    UpdateResult(UpdateClient owner, String packageName, String source, boolean prerelease, String currentVersion,
         String requiredVersion, boolean required) {
-      this(owner, packageName, source, currentVersion, requiredVersion, required, null);
+      this(owner, packageName, source, prerelease, currentVersion, requiredVersion, required, null);
     }
 
-    UpdateResult(UpdateClient owner, String packageName, String source, String currentVersion,
+    UpdateResult(UpdateClient owner, String packageName, String source, boolean prerelease, String currentVersion,
         String requiredVersion, boolean required, String latestVersion) {
       this.owner = owner;
       this.packageName = packageName;
       this.source = source;
+      this.prerelease = prerelease;
       this.currentVersion = currentVersion;
       this.requiredVersion = requiredVersion;
       this.required = required;
@@ -444,7 +446,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
         throw new IOException("Latest version not available for installer download");
       }
 
-      String installer = owner.downloadInstaller(packageName, latestVersion, source, System.getProperty("java.io.tmpdir"));
+      String installer = owner.downloadInstaller(packageName, latestVersion, source, prerelease, System.getProperty("java.io.tmpdir"));
       owner.runInstaller(installer);
     }
 
@@ -501,29 +503,28 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
       Runnable r =
           () -> {
             String title = (appTitle != null && !appTitle.isEmpty()) ? appTitle : packageName;
+
             String message =
-                title
-                    + " has an available update.\n\n"
-                    + "Current version: "
+                "The " + title + " launcher "
+                    + (forceUpdate ? " has a required update.\n\n" : " has an available update.\n\n")
+                    + "Current launcher version: "
                     + (currentVersion != null ? currentVersion : "unknown")
                     + "\n"
-                    + "Required version: "
-                    + (requiredVersion != null ? requiredVersion : "unknown")
-                    + "\n\n"
-                    + "Would you like to update now?";
+                    + "Required minimum launcher version: "
+                    + (requiredVersion != null ? requiredVersion : "unknown");
 
             final Object[] options;
             if (forceUpdate) {
-              options = new Object[] {"Update Now", "Quit"};
+              options = new Object[] {"Update Now", "Update Later"};
             } else {
-              options = new Object[] {"Update Now", "Later", "Ignore This Version"};
+              options = new Object[] {"Update Now", "Update Later", "Ignore This Version"};
             }
 
             int opt =
                 JOptionPane.showOptionDialog(
                     null,
                     message,
-                    "Update Available - " + title,
+                    "Launcher Update Required - " + title,
                     JOptionPane.DEFAULT_OPTION,
                     JOptionPane.INFORMATION_MESSAGE,
                     icon != null ? new ImageIcon(icon) : null,
@@ -1185,8 +1186,8 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
    * @throws IOException if the download fails
    */
   private String downloadInstaller(
-      String packageName, String version, String source, String destDir) throws IOException {
-    String downloadURL = constructInstallerDownloadURL(packageName, version, source);
+      String packageName, String version, String source, boolean prerelease, String destDir) throws IOException {
+    String downloadURL = constructInstallerDownloadURL(packageName, version, source, prerelease);
     return downloadInstallerWithFilename(downloadURL, destDir);
   }
 
@@ -1274,7 +1275,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
    * @return The constructed download URL
    * @throws IOException if platform detection fails
    */
-  private String constructInstallerDownloadURL(String packageName, String version, String source)
+  private String constructInstallerDownloadURL(String packageName, String version, String source, boolean prerelease)
       throws IOException {
     String baseURL = getJDeployBaseUrl();
     PlatformInfo platformInfo = detectPlatformAndFormat();
@@ -1284,7 +1285,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
     url.append("platform=").append(encode(platformInfo.platform));
     url.append("&package=").append(encode(packageName));
     url.append("&version=").append(encode(version));
-    url.append("&prerelease=false");
+    url.append("&prerelease=").append(prerelease);
     url.append("&updates=latest");
     url.append("&source=").append(encode(source));
     if (platformInfo.format != null && !platformInfo.format.isEmpty()) {
