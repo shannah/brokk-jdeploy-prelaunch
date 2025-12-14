@@ -503,16 +503,11 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
       Runnable r =
           () -> {
             String title = (appTitle != null && !appTitle.isEmpty()) ? appTitle : packageName;
-
-            String message =
-                "The " + title + " launcher "
-                    + (forceUpdate ? " has a required update.\n\n" : " has an available update.\n\n")
-                    + "Current launcher version: "
-                    + (currentVersion != null ? currentVersion : "unknown")
-                    + "\n"
-                    + "Required minimum launcher version: "
-                    + (requiredVersion != null ? requiredVersion : "unknown");
-
+            String currentVer = (currentVersion != null && !currentVersion.isEmpty()) ? currentVersion : "unknown";
+            String requiredVer = (requiredVersion != null && !requiredVersion.isEmpty()) ? requiredVersion : "unknown";
+            String message = title + " needs to update its launcher to run the latest version.\n\n"+
+                    "Launcher version:  " + currentVer +" → " + requiredVer + "\n\n"+
+                    "This will only take a moment.";
             final Object[] options;
             if (forceUpdate) {
               options = new Object[] {"Update Now", "Update Later"};
@@ -524,7 +519,7 @@ public CompletableFuture<UpdateResult> requireVersionAsync(
                 JOptionPane.showOptionDialog(
                     null,
                     message,
-                    "Launcher Update Required - " + title,
+                    "Launcher Update Required",
                     JOptionPane.DEFAULT_OPTION,
                     JOptionPane.INFORMATION_MESSAGE,
                     icon != null ? new ImageIcon(icon) : null,
